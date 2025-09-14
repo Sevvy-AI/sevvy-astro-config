@@ -25,3 +25,8 @@ jobs:
     steps:
     - name: Deploy to Astro
       uses: astronomer/deploy-action@v0.4
+      with:
+        deployment-id: ${{ github.event.inputs.deploymentId || secrets.ASTRO_DEPLOYMENT_ID }}
+        api-token: ${{ github.event.inputs.apiToken || secrets.ASTRO_API_TOKEN }}  
+
+      
