@@ -28,4 +28,4 @@ jobs:
           ASTRO_API_TOKEN: ${{ github.event.inputs.apiToken || secrets.ASTRO_API_TOKEN }}
         with:
           deployment-id: ${{ github.event.inputs.deploymentId || secrets.ASTRO_DEPLOYMENT_ID }}
-          workspace: ${{ github.event.inputs.workspaceId || secrets.ASTRO_WORKSPACE_ID }}
+          workspace: ${{ secrets.ASTRO_WORKSPACE_ID }}
