@@ -64,11 +64,7 @@ def send_failure_webhook(context):
                 "state": str(task_instance.state) if task_instance else 'unknown',
                 "log_url": log_url,
             },
-            "astro_metadata": {
-                "organization_id": organization_id,
-                "deployment_id": deployment_id,
-                "environment": "development" if deployment_id == 'local-dev' else "production"
-            },
+            "environment": "development" if deployment_id == 'local-dev' else "production",
             "error_message": "Task intentionally failed for testing purposes"
         }
         
