@@ -1,1 +1,4 @@
 # Astro Runtime includes the following pre-installed providers packages: https://docs.astronomer.io/astro/runtime-image-architecture#provider-packages
+
+# Additional dependencies for webhook functionality
+requests>=2.28.0
