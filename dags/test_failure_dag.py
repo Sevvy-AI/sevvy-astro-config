@@ -45,7 +45,7 @@ def send_failure_webhook(context):
         logging.error(f"🏢 Organization ID: {organization_id}, Deployment ID: {deployment_id}")
         
         # Webhook URL - Your actual webhook endpoint
-        webhook_url = "https://1749bc1ce31d.ngrok-free.app/api/webhooks/airflow"
+        webhook_url = "https://655608b6e6d3.ngrok-free.app/api/webhooks/airflow"
         
         # Prepare payload with failure details (including required dag_id and task_id at root level)
         payload = {
