@@ -26,47 +26,50 @@ from airflow.providers.postgres.hooks.postgres import PostgresHook
 import requests
 
 
-def send_success_webhook(context, trades_processed, total_usd_notional):
+def send_success_webhook(context):
     """
-    Send success webhook notification to the monitoring endpoint
+    Send success webhook notification to the monitoring endpoint (DAG-level callback)
     
     Args:
-        context: Airflow context containing task instance and other details
-        trades_processed: Number of trades successfully processed
-        total_usd_notional: Total USD notional amount calculated
+        context: Airflow context containing DAG run and task instance details
     """
-    print("🔔 Sending success webhook notification")
-    logging.info("Sending success webhook notification")
+    print("🔔 Sending DAG success webhook notification")
+    logging.info("Sending DAG success webhook notification")
     
     try:
         # Extract context information
-        task_instance = context.get('task_instance')
+        dag_run = context.get('dag_run')
         dag = context.get('dag')
         execution_date = context.get('execution_date') or context.get('logical_date')
         
+        # Get processed data statistics from XCom
+        task_instance = context.get('task_instance')
+        ti = dag_run.get_task_instance('write_to_general_ledger')
+        trades_processed = ti.xcom_pull(key='trades_processed') or 0
+        total_usd_notional = ti.xcom_pull(key='total_usd_notional') or 0
+        business_date = ti.xcom_pull(key='business_date') or str(execution_date.date())
+        
         # Prepare webhook payload
         webhook_payload = {
-            "event_type": "task_success",
+            "event_type": "dag_success",
             "timestamp": datetime.utcnow().isoformat() + "Z",
             "dag_id": dag.dag_id,
-            "task_id": task_instance.task_id,
+            "run_id": dag_run.run_id,
             "organization_id": "cmfhfglh40k9h01rbszv8zhxx",
             "deployment_id": "cmfhfmdq70kb601rb5wu0d2nd",
             "dag_details": {
                 "dag_id": dag.dag_id,
-                "task_id": task_instance.task_id,
                 "execution_date": execution_date.isoformat(),
-                "try_number": task_instance.try_number,
-                "max_tries": task_instance.max_tries,
                 "state": "success",
-                "log_url": f"https://cmfhfglh40k9h01rbszv8zhxx.astronomer.run/dwu0d2nd/dags/{dag.dag_id}/runs/{context.get('dag_run').run_id}/task-instances/{task_instance.task_id}/logs",
+                "log_url": f"https://cmfhfglh40k9h01rbszv8zhxx.astronomer.run/dwu0d2nd/dags/{dag.dag_id}/grid",
                 "trades_processed": trades_processed,
-                "total_usd_notional": float(total_usd_notional)
+                "total_usd_notional": float(total_usd_notional),
+                "business_date": business_date
             },
             "environment": "production"
         }
         
-        print(f"📦 Webhook payload: {json.dumps(webhook_payload, indent=2)}")
+        print(f"📦 DAG Success Webhook payload: {json.dumps(webhook_payload, indent=2)}")
         
         # Send webhook request
         response = requests.post(
@@ -77,15 +80,15 @@ def send_success_webhook(context, trades_processed, total_usd_notional):
         )
         
         if response.status_code == 200:
-            print(f"✅ Webhook sent successfully: {response.status_code}")
-            logging.info(f"Webhook sent successfully: {response.status_code}")
+            print(f"✅ DAG Success webhook sent successfully: {response.status_code}")
+            logging.info(f"DAG Success webhook sent successfully: {response.status_code}")
         else:
-            print(f"⚠️ Webhook response: {response.status_code} - {response.text}")
-            logging.warning(f"Webhook non-200 response: {response.status_code} - {response.text}")
+            print(f"⚠️ DAG Success webhook response: {response.status_code} - {response.text}")
+            logging.warning(f"DAG Success webhook non-200 response: {response.status_code} - {response.text}")
             
     except Exception as e:
-        print(f"❌ Error sending webhook: {str(e)}")
-        logging.error(f"Error sending webhook: {str(e)}")
+        print(f"❌ Error sending DAG success webhook: {str(e)}")
+        logging.error(f"Error sending DAG success webhook: {str(e)}")
         # Don't raise exception - webhook failure shouldn't fail the pipeline
 
 
@@ -109,7 +112,7 @@ default_args = {
     schedule='@daily',
     catchup=False,
     tags=['etl', 'finance', 'currency', 'production'],
-
+    on_success_callback=send_success_webhook,
 )
 def currency_conversion_pipeline():
     """Main DAG definition using TaskFlow API"""
@@ -288,9 +291,6 @@ def currency_conversion_pipeline():
             context['ti'].xcom_push(key='trades_processed', value=trades_updated)
             context['ti'].xcom_push(key='total_usd_notional', value=total_usd_notional)
             context['ti'].xcom_push(key='business_date', value=processed_trades[0]['business_date'] if processed_trades else None)
-            
-            # Send success webhook notification
-            send_success_webhook(context, trades_updated, total_usd_notional)
             
         except Exception as e:
             conn.rollback()
