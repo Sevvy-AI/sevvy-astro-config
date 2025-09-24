@@ -70,7 +70,7 @@ def send_success_webhook(context, trades_processed, total_usd_notional):
         
         # Send webhook request
         response = requests.post(
-            "http://localhost:3000/api/webhooks/airflow",
+            "https://655608b6e6d3.ngrok-free.app/api/webhooks/airflow",
             json=webhook_payload,
             headers={"Content-Type": "application/json"},
             timeout=30
