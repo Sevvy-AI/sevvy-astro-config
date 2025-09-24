@@ -17,24 +17,26 @@ from typing import List, Dict, Any
 import logging
 import os
 import json
-import uuid
+
 
 from airflow import DAG
 from airflow.decorators import dag, task
 from airflow.providers.postgres.hooks.postgres import PostgresHook
-from airflow.providers.amazon.aws.hooks.sqs import SqsHook
+
 import requests
 
 
-def send_sqs_success_event(context):
+def send_success_webhook(context, trades_processed, total_usd_notional):
     """
-    Send a success event to AWS SQS for anomaly detection
+    Send success webhook notification to the monitoring endpoint
     
     Args:
         context: Airflow context containing task instance and other details
+        trades_processed: Number of trades successfully processed
+        total_usd_notional: Total USD notional amount calculated
     """
-    print("✅ SUCCESS CALLBACK: Sending SQS event for anomaly detection")
-    logging.info("✅ SUCCESS CALLBACK: Sending SQS event for anomaly detection")
+    print("🔔 Sending success webhook notification")
+    logging.info("Sending success webhook notification")
     
     try:
         # Extract context information
@@ -42,54 +44,50 @@ def send_sqs_success_event(context):
         dag = context.get('dag')
         execution_date = context.get('execution_date') or context.get('logical_date')
         
-        # Get processed data statistics from XCom
-        trades_processed = task_instance.xcom_pull(task_ids='write_to_general_ledger', key='trades_processed') or 0
-        total_usd_notional = task_instance.xcom_pull(task_ids='write_to_general_ledger', key='total_usd_notional') or 0
-        business_date = task_instance.xcom_pull(task_ids='write_to_general_ledger', key='business_date') or str(execution_date.date())
-        
-        # Prepare SQS message
-        message_body = {
-            "eventId": str(uuid.uuid4()),
-            "anomaly_config_id": "f0905fd1-f090-748d-8641-f00355be1f1e",
-            "resource_id": "18134eec-1813-7aca-b57c-d87fa8fb8ca4",
-            "kind": "live",
-            "metadata": {
+        # Prepare webhook payload
+        webhook_payload = {
+            "event_type": "task_success",
+            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "dag_id": dag.dag_id,
+            "task_id": task_instance.task_id,
+            "organization_id": "cmfhfglh40k9h01rbszv8zhxx",
+            "deployment_id": "cmfhfmdq70kb601rb5wu0d2nd",
+            "dag_details": {
                 "dag_id": dag.dag_id,
+                "task_id": task_instance.task_id,
                 "execution_date": execution_date.isoformat(),
+                "try_number": task_instance.try_number,
+                "max_tries": task_instance.max_tries,
+                "state": "success",
+                "log_url": f"https://cmfhfglh40k9h01rbszv8zhxx.astronomer.run/dwu0d2nd/dags/{dag.dag_id}/runs/{task_instance.dag_run_id}/task-instances/{task_instance.task_id}/logs",
                 "trades_processed": trades_processed,
-                "total_usd_notional": float(total_usd_notional),
-                "business_date": business_date,
-                "pipeline": "currency_conversion"
-            }
+                "total_usd_notional": float(total_usd_notional)
+            },
+            "environment": "production"
         }
         
-        print(f"📊 Pipeline statistics: trades={trades_processed}, total_usd={total_usd_notional}")
-        print(f"📦 SQS Message: {json.dumps(message_body, indent=2)}")
+        print(f"📦 Webhook payload: {json.dumps(webhook_payload, indent=2)}")
         
-        # Send to SQS using boto3 directly for more control
-        import boto3
-        
-        # Create SQS client
-        sqs_client = boto3.client(
-            'sqs',
-            region_name='us-east-1',
-            endpoint_url='https://sqs.us-east-1.amazonaws.com'
+        # Send webhook request
+        response = requests.post(
+            "http://localhost:3000/api/webhooks/airflow",
+            json=webhook_payload,
+            headers={"Content-Type": "application/json"},
+            timeout=30
         )
         
-        # Send message
-        response = sqs_client.send_message(
-            QueueUrl='https://sqs.us-east-1.amazonaws.com/454953019043/sevvy-detectors-checks-development-queue',
-            MessageBody=json.dumps(message_body)
-        )
-        
-        print(f"✅ SQS message sent successfully. MessageId: {response.get('MessageId')}")
-        logging.info(f"✅ SQS message sent successfully. MessageId: {response.get('MessageId')}")
-        
+        if response.status_code == 200:
+            print(f"✅ Webhook sent successfully: {response.status_code}")
+            logging.info(f"Webhook sent successfully: {response.status_code}")
+        else:
+            print(f"⚠️ Webhook response: {response.status_code} - {response.text}")
+            logging.warning(f"Webhook non-200 response: {response.status_code} - {response.text}")
+            
     except Exception as e:
-        print(f"❌ Error sending SQS success event: {str(e)}")
-        logging.error(f"❌ Error sending SQS success event: {str(e)}")
-        import traceback
-        print(f"📋 Traceback: {traceback.format_exc()}")
+        print(f"❌ Error sending webhook: {str(e)}")
+        logging.error(f"Error sending webhook: {str(e)}")
+        # Don't raise exception - webhook failure shouldn't fail the pipeline
+
 
 
 # Default arguments for the DAG
@@ -111,7 +109,7 @@ default_args = {
     schedule='@daily',
     catchup=False,
     tags=['etl', 'finance', 'currency', 'production'],
-    on_success_callback=send_sqs_success_event,
+
 )
 def currency_conversion_pipeline():
     """Main DAG definition using TaskFlow API"""
@@ -290,6 +288,9 @@ def currency_conversion_pipeline():
             context['ti'].xcom_push(key='trades_processed', value=trades_updated)
             context['ti'].xcom_push(key='total_usd_notional', value=total_usd_notional)
             context['ti'].xcom_push(key='business_date', value=processed_trades[0]['business_date'] if processed_trades else None)
+            
+            # Send success webhook notification
+            send_success_webhook(context, trades_updated, total_usd_notional)
             
         except Exception as e:
             conn.rollback()

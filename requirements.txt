@@ -2,8 +2,4 @@
 
 # Additional dependencies for webhook functionality
 requests>=2.28.0
-boto3>=1.26.0
 psycopg2-binary>=2.9.0
-
-# AWS provider for SQS functionality
-apache-airflow-providers-amazon>=8.0.0
