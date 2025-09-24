@@ -59,7 +59,7 @@ def send_success_webhook(context, trades_processed, total_usd_notional):
                 "try_number": task_instance.try_number,
                 "max_tries": task_instance.max_tries,
                 "state": "success",
-                "log_url": f"https://cmfhfglh40k9h01rbszv8zhxx.astronomer.run/dwu0d2nd/dags/{dag.dag_id}/runs/{task_instance.dag_run_id}/task-instances/{task_instance.task_id}/logs",
+                "log_url": f"https://cmfhfglh40k9h01rbszv8zhxx.astronomer.run/dwu0d2nd/dags/{dag.dag_id}/runs/{context.get('dag_run').run_id}/task-instances/{task_instance.task_id}/logs",
                 "trades_processed": trades_processed,
                 "total_usd_notional": float(total_usd_notional)
             },
