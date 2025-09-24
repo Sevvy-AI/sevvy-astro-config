@@ -209,7 +209,7 @@ def currency_conversion_pipeline():
             # Look up exchange rate
             if original_currency in exchange_rates:
                 rate = exchange_rates[original_currency]
-                notional_usd = notional_original * rate
+                notional_usd = notional_original / rate
                 
                 print(f"  Trade {trade['external_trade_id']}: "
                       f"{notional_original:,.2f} {original_currency} "
