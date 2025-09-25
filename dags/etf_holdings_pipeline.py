@@ -274,43 +274,52 @@ def etf_holdings_pipeline():
     def calculate_holdings(usd_prices: List[Dict[str, Any]], 
                           trades: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """
-        Calculate holdings values by joining prices with trades
+        Calculate aggregated holdings values by ETF symbol
         """
-        print(f"💰 Calculating holdings values")
+        print(f"💰 Calculating aggregated holdings values by ETF symbol")
         
         # Create price lookup dictionary
         price_lookup = {price['symbol']: price['usd_price'] 
                        for price in usd_prices}
         
-        # Calculate holdings
-        holdings = []
-        total_value = 0
+        # Aggregate trades by ETF symbol
+        etf_aggregates = {}
+        business_date = None
         
         for trade in trades:
             symbol = trade['etf_symbol']
             shares = trade['shares']
+            business_date = trade['trade_date']  # All trades should have same date
             
+            if symbol not in etf_aggregates:
+                etf_aggregates[symbol] = 0
+            etf_aggregates[symbol] += shares
+        
+        # Calculate holdings for each ETF
+        holdings = []
+        total_value = 0
+        
+        for symbol, total_shares in etf_aggregates.items():
             if symbol in price_lookup:
                 usd_price = price_lookup[symbol]
-                holding_value = shares * usd_price
+                holding_value = total_shares * usd_price
                 
                 holdings.append({
-                    'business_date': trade['trade_date'],
+                    'business_date': business_date,
                     'etf_symbol': symbol,
-                    'shares': shares,
+                    'total_shares': total_shares,
                     'price_usd': usd_price,
-                    'holding_value_usd': holding_value,
-                    'trade_id': trade['trade_id']
+                    'holding_value_usd': holding_value
                 })
                 
                 total_value += holding_value
                 
-                print(f"  {symbol}: {shares:,.2f} shares × ${usd_price:,.2f} = ${holding_value:,.2f}")
+                print(f"  {symbol}: {total_shares:,.2f} total shares × ${usd_price:,.2f} = ${holding_value:,.2f}")
             else:
-                logging.warning(f"No price found for ETF {symbol}, skipping trade {trade['trade_id']}")
+                logging.warning(f"No price found for ETF {symbol}, skipping aggregated position")
         
-        print(f"✅ Calculated {len(holdings)} holdings with total value: ${total_value:,.2f}")
-        logging.info(f"Calculated {len(holdings)} holdings with total value: {total_value}")
+        print(f"✅ Calculated {len(holdings)} ETF holdings with total portfolio value: ${total_value:,.2f}")
+        logging.info(f"Calculated {len(holdings)} ETF holdings with total value: {total_value}")
         
         return holdings
     
@@ -328,17 +337,13 @@ def etf_holdings_pipeline():
         # Get database connection
         pg_hook = PostgresHook(postgres_conn_id='pipeline_test_rds')
         
-        # Insert query
+        # Insert query for simplified schema
         insert_query = """
             INSERT INTO public.etf_holdings 
-                (business_date, etf_symbol, shares, price_usd, holding_value_usd, trade_id, created_at)
-            VALUES (%s, %s, %s, %s, %s, %s, NOW())
-            ON CONFLICT (business_date, trade_id) DO UPDATE SET
-                etf_symbol = EXCLUDED.etf_symbol,
-                shares = EXCLUDED.shares,
-                price_usd = EXCLUDED.price_usd,
-                holding_value_usd = EXCLUDED.holding_value_usd,
-                updated_at = NOW()
+                (business_date, etf_symbol, amount_usd)
+            VALUES (%s, %s, %s)
+            ON CONFLICT (business_date, etf_symbol) DO UPDATE SET
+                amount_usd = EXCLUDED.amount_usd
         """
         
         # Execute inserts in a transaction
@@ -353,10 +358,7 @@ def etf_holdings_pipeline():
                 cursor.execute(insert_query, (
                     holding['business_date'],
                     holding['etf_symbol'],
-                    holding['shares'],
-                    holding['price_usd'],
-                    holding['holding_value_usd'],
-                    holding['trade_id']
+                    holding['holding_value_usd']
                 ))
                 
                 holdings_written += 1
