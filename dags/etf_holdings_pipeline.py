@@ -274,52 +274,45 @@ def etf_holdings_pipeline():
     def calculate_holdings(usd_prices: List[Dict[str, Any]], 
                           trades: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """
-        Calculate aggregated holdings values by ETF symbol
+        Calculate holdings values by matching trades with prices
         """
-        print(f"💰 Calculating aggregated holdings values by ETF symbol")
+        print(f"💰 Calculating holdings values")
         
-        # Create price lookup dictionary
-        price_lookup = {price['symbol']: price['usd_price'] 
-                       for price in usd_prices}
-        
-        # Aggregate trades by ETF symbol
-        etf_aggregates = {}
-        business_date = None
-        
-        for trade in trades:
-            symbol = trade['etf_symbol']
-            shares = trade['shares']
-            business_date = trade['trade_date']  # All trades should have same date
-            
-            if symbol not in etf_aggregates:
-                etf_aggregates[symbol] = 0
-            etf_aggregates[symbol] += shares
-        
-        # Calculate holdings for each ETF
         holdings = []
         total_value = 0
         
-        for symbol, total_shares in etf_aggregates.items():
-            if symbol in price_lookup:
-                usd_price = price_lookup[symbol]
-                holding_value = total_shares * usd_price
-                
-                holdings.append({
-                    'business_date': business_date,
-                    'etf_symbol': symbol,
-                    'total_shares': total_shares,
-                    'price_usd': usd_price,
-                    'holding_value_usd': holding_value
-                })
-                
-                total_value += holding_value
-                
-                print(f"  {symbol}: {total_shares:,.2f} total shares × ${usd_price:,.2f} = ${holding_value:,.2f}")
-            else:
-                logging.warning(f"No price found for ETF {symbol}, skipping aggregated position")
+        for trade in trades:
+            trade_symbol = trade['etf_symbol']
+            trade_shares = trade['shares']
+            business_date = trade['trade_date']
+            
+            matched = False
+            
+            for price in usd_prices:
+                if price['symbol'] == trade_symbol:
+                    holding_value = trade_shares * price['usd_price']
+                    
+                    holdings.append({
+                        'business_date': business_date,
+                        'etf_symbol': trade_symbol,
+                        'shares': trade_shares,
+                        'price_usd': price['usd_price'],
+                        'holding_value_usd': holding_value,
+                        'trade_id': trade['trade_id'],
+                        'price_date': price['price_date']
+                    })
+                    
+                    total_value += holding_value
+                    matched = True
+                    
+                    print(f"  {trade_symbol}: {trade_shares:,.2f} shares × ${price['usd_price']:,.2f} = ${holding_value:,.2f}")
+            
+            if not matched:
+                logging.warning(f"No price found for trade {trade['trade_id']} (symbol: {trade_symbol})")
         
-        print(f"✅ Calculated {len(holdings)} ETF holdings with total portfolio value: ${total_value:,.2f}")
-        logging.info(f"Calculated {len(holdings)} ETF holdings with total value: {total_value}")
+        print(f"✅ Calculated {len(holdings)} holding records")
+        print(f"   Total portfolio value: ${total_value:,.2f}")
+        logging.info(f"Calculated {len(holdings)} holdings with total value: {total_value}")
         
         return holdings
     
@@ -336,6 +329,16 @@ def etf_holdings_pipeline():
         
         # Get database connection
         pg_hook = PostgresHook(postgres_conn_id='pipeline_test_rds')
+        
+        # Aggregate holdings by symbol for final output
+        etf_totals = {}
+        business_date = holdings[0]['business_date'] if holdings else None
+        
+        for holding in holdings:
+            symbol = holding['etf_symbol']
+            if symbol not in etf_totals:
+                etf_totals[symbol] = 0
+            etf_totals[symbol] += holding['holding_value_usd']
         
         # Insert query for simplified schema
         insert_query = """
@@ -354,15 +357,15 @@ def etf_holdings_pipeline():
             holdings_written = 0
             total_holdings_value = 0
             
-            for holding in holdings:
+            for symbol, amount in etf_totals.items():
                 cursor.execute(insert_query, (
-                    holding['business_date'],
-                    holding['etf_symbol'],
-                    holding['holding_value_usd']
+                    business_date,
+                    symbol,
+                    amount
                 ))
                 
                 holdings_written += 1
-                total_holdings_value += holding['holding_value_usd']
+                total_holdings_value += amount
             
             # Commit the transaction
             conn.commit()
@@ -373,7 +376,7 @@ def etf_holdings_pipeline():
             # Push statistics to XCom for success callback
             context['ti'].xcom_push(key='holdings_processed', value=holdings_written)
             context['ti'].xcom_push(key='total_holdings_value', value=total_holdings_value)
-            context['ti'].xcom_push(key='business_date', value=holdings[0]['business_date'] if holdings else None)
+            context['ti'].xcom_push(key='business_date', value=business_date)
             
         except Exception as e:
             conn.rollback()
